@@ -145,8 +145,60 @@ int *PortInput_OverlayKey(void) { pthread_once(&sLoadOnce, load); return &sOverl
 int *PortInput_OverlayPad(void) { pthread_once(&sLoadOnce, load); return &sOverlayPad; }
 
 /* 1 = this event opens or closes the settings window. */
+/* controller_events.txt (game folder): every button, hat, key and big stick movement the controllers produce, as the
+ * game receives it, one line each (at most 400 lines, from the start of the run). Makes it possible to see what a
+ * controller that does not work sends. */
+static void pad_event_log(const SDL_Event *ev) {
+    static int sLines;
+    static int sAxisLast[16];
+    char line[160];
+    FILE *fp;
+
+    switch (ev->type) {
+    case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+        snprintf(line, sizeof(line), "joystick button %d down", (int)ev->jbutton.button);
+        break;
+    case SDL_EVENT_JOYSTICK_HAT_MOTION:
+        snprintf(line, sizeof(line), "joystick hat %d value %d", (int)ev->jhat.hat, (int)ev->jhat.value);
+        break;
+    case SDL_EVENT_JOYSTICK_AXIS_MOTION: {
+        int ax = (int)ev->jaxis.axis & 15, big = ev->jaxis.value > 20000 ? 1 : ev->jaxis.value < -20000 ? -1 : 0;
+        if (big == sAxisLast[ax]) {
+            return;
+        }
+        sAxisLast[ax] = big;
+        if (big == 0) {
+            return;
+        }
+        snprintf(line, sizeof(line), "joystick axis %d %s", (int)ev->jaxis.axis, big > 0 ? "high" : "low");
+        break;
+    }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        snprintf(line, sizeof(line), "gamepad button %d down", (int)ev->gbutton.button);
+        break;
+    case SDL_EVENT_KEY_DOWN:
+        if (ev->key.repeat) {
+            return;
+        }
+        snprintf(line, sizeof(line), "key scancode %d (%s) down", (int)ev->key.scancode, SDL_GetScancodeName(ev->key.scancode));
+        break;
+    default:
+        return;
+    }
+    if (sLines >= 400) {
+        return;
+    }
+    sLines++;
+    fp = fopen("controller_events.txt", "a");
+    if (fp != NULL) {
+        fprintf(fp, "%8u ms  %s\n", (unsigned)SDL_GetTicks(), line);
+        fclose(fp);
+    }
+}
+
 int PortInput_Hotkey(const SDL_Event *ev) {
     pthread_once(&sLoadOnce, load);
+    pad_event_log(ev);
     if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP &&
         (ev->gbutton.button == SDL_GAMEPAD_BUTTON_START || ev->gbutton.button == SDL_GAMEPAD_BUTTON_BACK)) {
         sComboLatch = 0;
@@ -472,8 +524,9 @@ int PortInput_ComboPoll(void) {
  *                          Created with instructions the first time; lines starting with # are ignored.
  *   controllers.txt        written by the game: name, GUID, vendor:product and button / axis / hat counts of
  *                          every controller it sees, with a line to copy into gamecontrollerdb.txt and edit.
- * A controller that is still unknown after gamecontrollerdb.txt gets a guessed layout (the usual PS2 USB adapter
- * layout for 0810:0001, a generic one otherwise), so that it works at once and can be corrected in the file. */
+ * A controller that is still unknown after gamecontrollerdb.txt gets a guessed layout (its buttons in order, see
+ * pad_guess), so that all of it works at once; the Controls tab of the settings window says which button is which
+ * action, and the file can describe the controller properly. */
 #define PAD_DB_FILE "gamecontrollerdb.txt"
 #define PAD_REPORT_FILE "controllers.txt"
 
@@ -488,9 +541,45 @@ static const char kPadDbTemplate[] =
     "# (all on one line). b0, b1 ... are the controller's buttons, a0, a1 ... its axes, h0.1 / h0.2 / h0.4 / h0.8 the hat\n"
     "# (up / right / down / left). a0~ is an inverted axis, +a4 a half axis, lefttrigger:b4 a button used as a trigger.\n"
     "# a = south (Cross), b = east (Circle), x = west (Square), y = north (Triangle). Which of those does what in the game is\n"
-    "# set in the game's settings window (F1, or START + SELECT) or in bt3_settings.txt.\n";
+    "# set in the game's settings window (F1, START + SELECT or the on-screen buttons), Controls tab: choose an action, then\n"
+    "# press the button on the controller. That is the easy way for a controller the game has no layout for: its buttons\n"
+    "# are all there, one after the other, and you only say which does what.\n";
 
 static time_t sPadDbTime = (time_t)-1;
+static int sPadDbCount; /* mappings the file gave, -1 = it could not be read */
+
+/* The file is read here, line by line, and not by SDL_AddGamepadMappingsFromFile: on Android SDL looks for a file with
+ * a relative name in the app's private storage and in its assets, never in the game folder this one is in. */
+static int pad_db_read(void) {
+    static char line[4096];
+    FILE *fp = fopen(PAD_DB_FILE, "r");
+    int n = 0;
+
+    if (fp == NULL) {
+        return -1;
+    }
+    while (fgets(line, (int)sizeof(line), fp) != NULL) {
+        char *p = line;
+        size_t len = strlen(line);
+
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' || line[len - 1] == ' ' || line[len - 1] == '\t')) {
+            line[--len] = '\0';
+        }
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        if (*p == '\0' || *p == '#') {
+            continue;
+        }
+        if (SDL_AddGamepadMapping(p) >= 0) {
+            n++;
+        } else {
+            fprintf(stderr, "bt3: %s: a line was not accepted: %.60s\n", PAD_DB_FILE, p);
+        }
+    }
+    fclose(fp);
+    return n;
+}
 
 static void pad_db_reload(void) {
     struct stat st;
@@ -508,21 +597,51 @@ static void pad_db_reload(void) {
         return;
     }
     sPadDbTime = st.st_mtime;
-    fprintf(stderr, "bt3: %s: %d mappings read\n", PAD_DB_FILE, SDL_AddGamepadMappingsFromFile(PAD_DB_FILE));
+    sPadDbCount = pad_db_read();
+    fprintf(stderr, "bt3: %s: %d mappings read\n", PAD_DB_FILE, sPadDbCount);
 }
 
-/* The guessed layout for a controller nobody described. nb, na, nh: its buttons, axes and hats. */
+/* The guessed layout for a controller nobody described: its buttons, in the order SDL numbers them, become the
+ * buttons of a gamepad one after the other (b0 = a, b1 = b, b2 = x ...), so that every button of it does something
+ * and none is lost, wherever the system puts it. Which of them is Cross, Circle ... is then chosen in the settings
+ * window's Controls tab (choose an action, press the button), or by a line of gamepad's own in gamecontrollerdb.txt.
+ * The sticks: axes 0 and 1 the left one, 2 and 3 the right one. nb, na, nh: its buttons, axes and hats. */
 static void pad_guess(int vid, int pid, int nb, int na, int nh, char *out, size_t size) {
-    const char *dpad = nh > 0 ? "dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8" : "dpup:b12,dpdown:b13,dpleft:b14,dpright:b15";
-    if (vid == 0x0810 && pid == 0x0001) { /* the generic PS2-to-USB adapters and game stick pads */
-        snprintf(out, size, "a:b2,b:b1,x:b3,y:b0,back:b8,start:b9,leftshoulder:b6,rightshoulder:b7,lefttrigger:b4,righttrigger:b5,"
-                            "leftstick:b10,rightstick:b11,%s,leftx:a0,lefty:a1,rightx:a3,righty:a2,", dpad);
-    } else {
-        snprintf(out, size, "a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,back:b6,start:b7,leftstick:b8,rightstick:b9,%s,"
-                            "leftx:a0,lefty:a1,rightx:a2,righty:a3,%s", dpad,
-                 na >= 6 ? "lefttrigger:a4,righttrigger:a5," : "");
+    static const char *const kNames[] = {"a", "b", "x", "y", "back", "guide", "start", "leftstick", "rightstick",
+                                         "leftshoulder", "rightshoulder", "dpup", "dpdown", "dpleft", "dpright",
+                                         "misc1", "paddle1", "paddle2", "paddle3", "paddle4", "touchpad",
+                                         "misc2", "misc3", "misc4", "misc5", "misc6"};
+    size_t len = 0;
+    int i, n = nb < 26 ? nb : 26;
+
+    out[0] = '\0';
+    if (vid == 0x0810 && pid == 0x0001) {
+        /* the generic PS2-to-USB adapter and game stick pad, as Android numbers it: the D-pad as SDL's own buttons, and its
+         * twelve buttons from 20 on, in the order the pad has them: Triangle, Circle, Cross, Square, L2, R2, L1, R1, Select,
+         * Start, L3, R3 */
+        snprintf(out, size, "y:b20,b:b21,a:b22,x:b23,lefttrigger:b24,righttrigger:b25,leftshoulder:b26,rightshoulder:b27,"
+                            "back:b28,start:b29,leftstick:b30,rightstick:b31,dpup:b11,dpdown:b12,dpleft:b13,dpright:b14,"
+                            "leftx:a0,lefty:a1,rightx:a2,righty:a3,");
+        return;
     }
-    (void)nb;
+    for (i = 0; i < n && len < size; i++) {
+        if (nh > 0 && i >= 11 && i <= 14) {
+            continue; /* the hat is the D-pad */
+        }
+        len += (size_t)snprintf(out + len, size - len, "%s:b%d,", kNames[i], i);
+    }
+    if (nh > 0 && len < size) {
+        len += (size_t)snprintf(out + len, size - len, "dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,");
+    }
+    if (na >= 2 && len < size) {
+        len += (size_t)snprintf(out + len, size - len, "leftx:a0,lefty:a1,");
+    }
+    if (na >= 4 && len < size) {
+        len += (size_t)snprintf(out + len, size - len, "rightx:a2,righty:a3,");
+    }
+    if (na >= 6 && len < size) {
+        len += (size_t)snprintf(out + len, size - len, "lefttrigger:a4,righttrigger:a5,");
+    }
 }
 
 static int sPadReportFresh;
@@ -547,7 +666,8 @@ static void pad_fallbacks(void) {
     }
     fp = fopen(PAD_REPORT_FILE, "w");
     if (fp != NULL) {
-        fputs("Controllers the game has seen (written by the game; see gamecontrollerdb.txt to correct a layout).\n\n", fp);
+        fputs("Controllers the game has seen (written by the game; see gamecontrollerdb.txt to correct a layout).\n", fp);
+        fprintf(fp, "gamecontrollerdb.txt: %d mappings read%s\n\n", sPadDbCount, sPadDbCount < 0 ? " (could not be read)" : "");
     }
     for (i = 0; ids != NULL && i < n; i++) {
         SDL_JoystickID id = ids[i];
