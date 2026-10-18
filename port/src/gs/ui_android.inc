@@ -239,13 +239,13 @@ static void page_video(PortVideo &v) {
 static void page_performance(PortVideo &v) {
     card_begin("speed", T("Speed", "Velocidade", "Velocidad"));
     {
-        bool fsk = v.frameSkip != 0;
-        if (aswitch(T("Skip pictures instead of slowing down", "Pular quadros em vez de ficar lento", "Saltar cuadros en vez de ir lento"),
-                    T("When the GPU is behind, the game keeps its speed and leaves a picture out.",
-                      "Quando a GPU não dá conta, o jogo mantém a velocidade e pula um quadro.",
-                      "Cuando la GPU no alcanza, el juego mantiene la velocidad y salta un cuadro."), &fsk)) {
-            v.frameSkip = fsk;
-        }
+        static const int vals[] = {0, 1, 2, 3};
+        const char *names[] = {T("Off", "Desligado", "Apagado"), "1", "2", "3"};
+        achoice(T("Skip pictures (most in a row)", "Pular quadros (máx. seguidos)", "Saltar cuadros (máx. seguidos)"),
+                T("When the GPU is behind, the game keeps its speed and leaves up to this many pictures out in a row.",
+                  "Quando a GPU não dá conta, o jogo mantém a velocidade e pula até esta quantidade de quadros seguidos.",
+                  "Cuando la GPU no alcanza, el juego mantiene la velocidad y salta hasta esta cantidad de cuadros seguidos."),
+                &v.frameSkip, names, vals, 4);
     }
     {
         bool fd = gGsFragDepth != 0;
@@ -256,19 +256,6 @@ static void page_performance(PortVideo &v) {
                     &fd)) {
             gGsFragDepth = fd;
             save_setting("frag_depth", fd);
-        }
-    }
-    {
-        static const int vals[] = {0, 1, 2};
-        const char *names[] = {T("Off (30)", "Desligado (30)", "Apagado (30)"), "60", "120"};
-        int smooth = gsInterp < 0 ? 0 : gsInterp > 2 ? 2 : gsInterp;
-        if (achoice(T("Smooth motion", "Movimento suave", "Movimiento suave"),
-                    T("Extra pictures between the game's 30. Costs GPU; the fight itself does not change.",
-                      "Quadros extras entre os 30 do jogo. Pesa na GPU; a luta em si não muda.",
-                      "Cuadros extra entre los 30 del juego. Pesa en la GPU; la pelea no cambia."),
-                    &smooth, names, vals, 3)) {
-            gsInterp = smooth;
-            save_setting("interp", gsInterp);
         }
     }
     if (!sGL) {

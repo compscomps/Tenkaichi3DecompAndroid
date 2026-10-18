@@ -77,7 +77,7 @@ object GpuProfiles {
             1 -> Profile(gpu, 1, scale4 = 4, interp = 0, fragDepth = 0, frameSkip = 1, fxOffAdd = 32, filter = 0)
             2 -> Profile(gpu, 2, scale4 = 6, interp = 0, fragDepth = 0, frameSkip = 1, fxOffAdd = 0, filter = 0)
             3 -> Profile(gpu, 3, scale4 = 8, interp = 0, fragDepth = 1, frameSkip = 1, fxOffAdd = 0, filter = 0)
-            4 -> Profile(gpu, 4, scale4 = 8, interp = 1, fragDepth = 1, frameSkip = 1, fxOffAdd = 0, filter = 0)
+            4 -> Profile(gpu, 4, scale4 = 8, interp = 0, fragDepth = 1, frameSkip = 1, fxOffAdd = 0, filter = 0)
             else -> null
         }
     }

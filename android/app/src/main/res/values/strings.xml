@@ -323,8 +323,8 @@
     <string name="gpu_opt_filter">Bilinear screen filter (no extra pass)</string>
     <string name="frag_depth">Precise depth</string>
     <string name="frag_depth_text">Exact overlap of surfaces in one plane (waterfalls, marks on the ground). Off is faster on weaker GPUs, with a rare flicker.</string>
-    <string name="frame_skip">Skip pictures instead of slowing down</string>
-    <string name="frame_skip_text">When the GPU is behind, the game keeps its speed and leaves a picture out.</string>
+    <string name="frame_skip">Skip pictures (most in a row)</string>
+    <string name="frame_skip_text">When the GPU is behind, the game keeps its speed and leaves up to this many pictures out in a row (0 = off). More is choppier but lighter.</string>
     <string name="orientation">Screen orientation</string>
     <string name="orientation_landscape">Landscape</string>
     <string name="orientation_portrait">Portrait</string>

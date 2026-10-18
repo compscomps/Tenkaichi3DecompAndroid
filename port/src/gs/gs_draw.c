@@ -4434,8 +4434,8 @@ void GsGpu_InterpFlush(void) { /* (the name Port_VBlank knew it by) */
  * to show a picture ran the game itself slowly. When the game is more than a vertical blank behind its grid as a
  * picture is finished, the NEXT tick is computed without being drawn (its drawing is left out the way a re-run
  * frame's is: GS_NO_PICTURE) and nothing is shown for it; the grid (plat_stub.c: a blank that is already due is
- * not waited for) then catches up. At most kSkipMax ticks in a row, so that something is shown at least every
- * fifth tick; a machine too slow for that slows down as before. Setting "frame_skip" (F1, Video), on by default.
+ * not waited for) then catches up. At most "frame_skip" ticks in a row (0 = off, 1..3, 1 by default; F1, Video), so that
+ * something is shown at least every fourth tick; a machine too slow for that slows down as before.
  * Only helps where the showing is what takes the time (a weak graphics chip), not the computing. */
 int gsSkipFrame;
 static int sSkipOn = -1, sSkipRun;
@@ -4443,13 +4443,14 @@ static unsigned sSkipped; /* (BT3_GS_VERBOSE) */
 
 int GsDraw_FrameSkip(void) {
     if (sSkipOn < 0) {
-        sSkipOn = getenv("BT3_FRAME_SKIP") != NULL ? atoi(getenv("BT3_FRAME_SKIP")) != 0 : Port_Setting("frame_skip", 1) != 0;
+        sSkipOn = getenv("BT3_FRAME_SKIP") != NULL ? atoi(getenv("BT3_FRAME_SKIP")) : Port_Setting("frame_skip", 1);
+        sSkipOn = sSkipOn < 0 ? 0 : sSkipOn > 3 ? 3 : sSkipOn; /* 0 off, 1..3: most pictures left out in a row */
     }
     return sSkipOn;
 }
 
 void GsDraw_FrameSkipSet(int on) {
-    sSkipOn = on != 0;
+    sSkipOn = on < 0 ? 0 : on > 3 ? 3 : on; /* 0 off, 1..3: most pictures left out in a row */
     Port_SettingSave("frame_skip", sSkipOn);
 }
 
@@ -4459,7 +4460,7 @@ static void skip_decide(void) {
     extern int gPortOverlayOpen;
     int behind = Port_PaceBehindUs();
     int skip = GsDraw_FrameSkip() && getenv("BT3_UNCAPPED") == NULL && getenv("BT3_SHOT") == NULL && !gPortOverlayOpen &&
-               behind > (int)(Port_BlankNs() / 1000ull) && sSkipRun < 4;
+               behind > (int)(Port_BlankNs() / 1000ull) && sSkipRun < sSkipOn;
 
     if (getenv("BT3_SKIP_FORCE") != NULL) { /* testing: every other tick is left out, whatever the clock says */
         skip = sSkipRun == 0;
@@ -4511,8 +4512,7 @@ void GsGpu_FrameEnd(void) {
             }
         }
         if (gsInterp < 0) {
-            gsInterp = getenv("BT3_INTERP") != NULL ? atoi(getenv("BT3_INTERP")) : Port_Setting("interp", 0);
-            gsInterp = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
+            gsInterp = 0; /* locked at the game's own 30 pictures a second (no in-between pictures) */
             sInterpPrev = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
             sInterpBlend = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
             sInterpPrevSig = malloc(MAX_VU_UNIFORMS * sizeof(uint32_t));

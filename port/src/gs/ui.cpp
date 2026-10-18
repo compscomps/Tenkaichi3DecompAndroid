@@ -1342,11 +1342,12 @@ static void video_tab(PortVideo &v) {
     ImGui::SameLine();
     ImGui::TextDisabled("(F11)");
     {
-        bool vs = v.vsync != 0, fs = v.frameSkip != 0;
+        bool vs = v.vsync != 0;
         if (ImGui::Checkbox("V-sync", &vs)) { v.vsync = vs; }
         ImGui::SetItemTooltip("Each picture waits for the display's refresh. Turn it on if the picture tears.\n"
                               "Off is the default: it adds a little delay.");
-        if (ImGui::Checkbox("Skip pictures instead of slowing down", &fs)) { v.frameSkip = fs; }
+        ImGui::SetNextItemWidth(416.0f);
+        ImGui::SliderInt("Skip pictures (most in a row, 0 = off)", &v.frameSkip, 0, 3);
         ImGui::SetItemTooltip("When this machine cannot show a picture in time, the game normally runs slower.\n"
                               "With this on it stays at full speed and leaves pictures out instead (choppier,\n"
                               "not slower). It helps where the graphics chip is the slow part. On by default.");
@@ -1403,22 +1404,6 @@ static void video_tab(PortVideo &v) {
             ImGui::TextDisabled("Running now: %s. %s from the next start.", kApi[sGL ? 1 : 0], kApi[api]);
         }
         ImGui::TextWrapped("Active GPU: %s", sGpuName);
-    }
-    {
-        // In-between pictures (gs_draw.c): the fight is computed 30 times a second, as on the console; with this
-        // on one more picture is drawn between each two. The game itself, its replays and online play are the same.
-        static const char *kSmooth[] = { "Off (30, as the console)", "60 pictures a second", "120 pictures a second", "240 pictures a second" };
-        int smooth = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
-        ImGui::SetNextItemWidth(416.0f);
-        if (ImGui::Combo("Smooth motion", &smooth, kSmooth, 4)) {
-            gsInterp = smooth;
-            Port_SettingSave("interp", gsInterp);
-            Port_SettingsWrite();
-        }
-        ImGui::SetItemTooltip("Experimental. The game computes a fight 30 times a second. With this, more pictures are\n"
-                              "drawn between each two. The fight itself does not change, and neither does online play.\n"
-                              "The newest picture reaches the screen later: 17 ms at 60, 25 ms at 120, 29 ms at 240.\n"
-                              "Choose what your screen can show. F9 switches it off and on.");
     }
 #ifdef __ANDROID__
     {   // how finished pictures reach the screen (gs_gpu.c); applied between two frames, kept for the next start

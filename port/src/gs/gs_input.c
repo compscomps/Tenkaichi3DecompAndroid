@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 #include "gs_internal.h"
 #include "ui.h"
 
@@ -463,6 +465,136 @@ int PortInput_ComboPoll(void) {
     return 0;
 }
 
+/* ---- controllers SDL has no layout for ---------------------------------------------------------------------------
+ * SDL only lists a controller as a gamepad when it knows its layout. Two files in the game folder (the engine's
+ * working directory) take care of the others:
+ *   gamecontrollerdb.txt   yours: one SDL mapping line per controller, read again whenever the file changes.
+ *                          Created with instructions the first time; lines starting with # are ignored.
+ *   controllers.txt        written by the game: name, GUID, vendor:product and button / axis / hat counts of
+ *                          every controller it sees, with a line to copy into gamecontrollerdb.txt and edit.
+ * A controller that is still unknown after gamecontrollerdb.txt gets a guessed layout (the usual PS2 USB adapter
+ * layout for 0810:0001, a generic one otherwise), so that it works at once and can be corrected in the file. */
+#define PAD_DB_FILE "gamecontrollerdb.txt"
+#define PAD_REPORT_FILE "controllers.txt"
+
+static const char kPadDbTemplate[] =
+    "# Custom controller layouts (SDL's gamecontrollerdb format). Lines starting with # are ignored.\n"
+    "# The game reads this file again by itself whenever it changes; if a controller does not change, unplug and plug it.\n"
+    "#\n"
+    "# controllers.txt (same folder) lists every controller the game has seen, with its GUID and a ready line to copy here.\n"
+    "# One line per controller:\n"
+    "#   GUID,Name,a:b0,b:b1,x:b2,y:b3,back:b6,start:b7,leftshoulder:b4,rightshoulder:b5,leftstick:b8,rightstick:b9,\n"
+    "#   dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5,\n"
+    "# (all on one line). b0, b1 ... are the controller's buttons, a0, a1 ... its axes, h0.1 / h0.2 / h0.4 / h0.8 the hat\n"
+    "# (up / right / down / left). a0~ is an inverted axis, +a4 a half axis, lefttrigger:b4 a button used as a trigger.\n"
+    "# a = south (Cross), b = east (Circle), x = west (Square), y = north (Triangle). Which of those does what in the game is\n"
+    "# set in the game's settings window (F1, or START + SELECT) or in bt3_settings.txt.\n";
+
+static time_t sPadDbTime = (time_t)-1;
+
+static void pad_db_reload(void) {
+    struct stat st;
+    if (stat(PAD_DB_FILE, &st) != 0) {
+        FILE *fp = fopen(PAD_DB_FILE, "w");
+        if (fp != NULL) {
+            fputs(kPadDbTemplate, fp);
+            fclose(fp);
+        }
+        if (stat(PAD_DB_FILE, &st) != 0) {
+            return;
+        }
+    }
+    if (st.st_mtime == sPadDbTime) {
+        return;
+    }
+    sPadDbTime = st.st_mtime;
+    fprintf(stderr, "bt3: %s: %d mappings read\n", PAD_DB_FILE, SDL_AddGamepadMappingsFromFile(PAD_DB_FILE));
+}
+
+/* The guessed layout for a controller nobody described. nb, na, nh: its buttons, axes and hats. */
+static void pad_guess(int vid, int pid, int nb, int na, int nh, char *out, size_t size) {
+    const char *dpad = nh > 0 ? "dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8" : "dpup:b12,dpdown:b13,dpleft:b14,dpright:b15";
+    if (vid == 0x0810 && pid == 0x0001) { /* the generic PS2-to-USB adapters and game stick pads */
+        snprintf(out, size, "a:b2,b:b1,x:b3,y:b0,back:b8,start:b9,leftshoulder:b6,rightshoulder:b7,lefttrigger:b4,righttrigger:b5,"
+                            "leftstick:b10,rightstick:b11,%s,leftx:a0,lefty:a1,rightx:a3,righty:a2,", dpad);
+    } else {
+        snprintf(out, size, "a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,back:b6,start:b7,leftstick:b8,rightstick:b9,%s,"
+                            "leftx:a0,lefty:a1,rightx:a2,righty:a3,%s", dpad,
+                 na >= 6 ? "lefttrigger:a4,righttrigger:a5," : "");
+    }
+    (void)nb;
+}
+
+static int sPadReportFresh;
+
+static void pad_fallbacks(void) {
+    static SDL_JoystickID sSeen[32];
+    static int sSeenCount = -1;
+    int n = 0, i, same;
+    SDL_JoystickID *ids = SDL_GetJoysticks(&n);
+    FILE *fp;
+
+    if (n > 32) {
+        n = 32;
+    }
+    same = n == sSeenCount;
+    for (i = 0; same && i < n; i++) {
+        same = ids != NULL && ids[i] == sSeen[i];
+    }
+    if (same && sPadReportFresh) {
+        SDL_free(ids);
+        return;
+    }
+    fp = fopen(PAD_REPORT_FILE, "w");
+    if (fp != NULL) {
+        fputs("Controllers the game has seen (written by the game; see gamecontrollerdb.txt to correct a layout).\n\n", fp);
+    }
+    for (i = 0; ids != NULL && i < n; i++) {
+        SDL_JoystickID id = ids[i];
+        const char *name = SDL_GetJoystickNameForID(id);
+        char guid[64], clean[128], fields[512];
+        int vid = SDL_GetJoystickVendorForID(id), pid = SDL_GetJoystickProductForID(id), nb = 0, na = 0, nh = 0, known = SDL_IsGamepad(id);
+        SDL_Joystick *j;
+        char *c;
+        const char *how = known ? "layout known to SDL (or from gamecontrollerdb.txt)" : "no layout known";
+
+        snprintf(clean, sizeof(clean), "%s", name != NULL ? name : "Controller");
+        for (c = clean; *c != '\0'; c++) {
+            if (*c == ',') {
+                *c = ' ';
+            }
+        }
+        SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), guid, (int)sizeof(guid));
+        j = SDL_OpenJoystick(id);
+        if (j != NULL) {
+            nb = SDL_GetNumJoystickButtons(j);
+            na = SDL_GetNumJoystickAxes(j);
+            nh = SDL_GetNumJoystickHats(j);
+            SDL_CloseJoystick(j);
+        }
+        pad_guess(vid, pid, nb, na, nh, fields, sizeof(fields));
+        if (!known && nb >= 4 && na >= 2) {
+            char line[1024];
+            snprintf(line, sizeof(line), "%s,%s,%s", guid, clean, fields);
+            if (SDL_AddGamepadMapping(line) >= 0) {
+                how = "no layout known: a guessed one was added (correct it in gamecontrollerdb.txt)";
+            }
+        }
+        fprintf(stderr, "bt3: controller \"%s\" %04x:%04x GUID %s, %d buttons %d axes %d hats: %s\n", clean, vid & 0xFFFF, pid & 0xFFFF, guid, nb, na, nh, how);
+        if (fp != NULL) {
+            fprintf(fp, "%s\n  vendor:product %04x:%04x   %d buttons, %d axes, %d hats\n  %s\n  line for gamecontrollerdb.txt:\n%s,%s,%s\n\n",
+                    clean, vid & 0xFFFF, pid & 0xFFFF, nb, na, nh, how, guid, clean, fields);
+        }
+        sSeen[i] = id;
+    }
+    sSeenCount = n;
+    sPadReportFresh = 1;
+    if (fp != NULL) {
+        fclose(fp);
+    }
+    SDL_free(ids);
+}
+
 static void pads_refresh(void) {
     static unsigned calls;
     SDL_JoystickID *ids;
@@ -475,6 +607,8 @@ static void pads_refresh(void) {
     } else if (calls++ % 120 != 0) { /* look for plugged and unplugged controllers about once a second */
         return;
     }
+    pad_db_reload();
+    pad_fallbacks();
     ids = SDL_GetGamepads(&n);
     sIdCount = 0;
     for (i = 0; ids != NULL && i < n && sIdCount < MAX_PADS; i++) {

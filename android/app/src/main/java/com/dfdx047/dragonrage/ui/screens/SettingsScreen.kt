@@ -33,6 +33,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.res.stringResource
 import com.dfdx047.dragonrage.R
 import androidx.compose.ui.unit.dp
@@ -54,8 +57,19 @@ import com.dfdx047.dragonrage.ui.theme.Dbz
 import com.dfdx047.dragonrage.ui.theme.ThemeMode
 import kotlin.math.roundToInt
 
+/** The Settings screen is drawn smaller than the rest of the launcher (text, spacing and controls at 85 %). */
+private const val SETTINGS_UI_SCALE = 0.85f
+
 @Composable
 fun SettingsScreen(vm: AppViewModel) {
+    val d = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(d.density * SETTINGS_UI_SCALE, d.fontScale)) {
+        SettingsContent(vm)
+    }
+}
+
+@Composable
+private fun SettingsContent(vm: AppViewModel) {
     val s by vm.engineSettings.collectAsStateWithLifecycle()
     val ui by vm.uiState.collectAsStateWithLifecycle()
     fun get(k: String, d: Int) = s[k] ?: d
@@ -201,17 +215,14 @@ fun SettingsScreen(vm: AppViewModel) {
             ToggleRow(stringResource(R.string.astc), stringResource(R.string.astc_text), get(EngineSettings.ASTC, 0) != 0) {
                 vm.setting(EngineSettings.ASTC, if (it) 1 else 0)
             }
-            ToggleRow(stringResource(R.string.frame_skip), stringResource(R.string.frame_skip_text), get(EngineSettings.FRAME_SKIP, 1) != 0) {
-                vm.setting(EngineSettings.FRAME_SKIP, if (it) 1 else 0)
-            }
-            Text(stringResource(R.string.fps60), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.frame_skip), style = MaterialTheme.typography.titleSmall)
             ChipRow(
-                options = listOf(stringResource(R.string.off) to 0, "60" to 1, "120" to 2),
-                selected = get(EngineSettings.INTERP, 0).coerceIn(0, 2),
-                onSelect = { vm.setting(EngineSettings.INTERP, it) },
+                options = listOf(stringResource(R.string.off) to 0, "1" to 1, "2" to 2, "3" to 3),
+                selected = get(EngineSettings.FRAME_SKIP, 1).coerceIn(0, 3),
+                onSelect = { vm.setting(EngineSettings.FRAME_SKIP, it) },
             )
             Text(
-                stringResource(R.string.fps60_text),
+                stringResource(R.string.frame_skip_text),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(stringResource(R.string.present_mode), style = MaterialTheme.typography.titleSmall)

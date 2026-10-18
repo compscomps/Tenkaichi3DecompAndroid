@@ -322,8 +322,8 @@
     <string name="gpu_opt_filter">Filtro de pantalla bilineal (sin pasada extra)</string>
     <string name="frag_depth">Profundidad precisa</string>
     <string name="frag_depth_text">Superposición exacta de superficies en el mismo plano (cascadas, marcas en el suelo). Apagado es más rápido en GPUs débiles, con algún parpadeo raro.</string>
-    <string name="frame_skip">Saltar cuadros en vez de ir lento</string>
-    <string name="frame_skip_text">Cuando la GPU no alcanza, el juego mantiene la velocidad y salta un cuadro.</string>
+    <string name="frame_skip">Saltar cuadros (máx. seguidos)</string>
+    <string name="frame_skip_text">Cuando la GPU no alcanza, el juego mantiene la velocidad y salta hasta esta cantidad de cuadros seguidos (0 = apagado). Más es más entrecortado, pero más liviano.</string>
     <string name="orientation">Orientación de pantalla</string>
     <string name="orientation_landscape">Horizontal</string>
     <string name="orientation_portrait">Vertical</string>
